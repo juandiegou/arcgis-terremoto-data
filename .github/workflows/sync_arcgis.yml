@@ -2,18 +2,17 @@ name: Sincronizar Reportes ArcGIS
 
 on:
   schedule:
-    # Cada hora (hora UTC)
     - cron: '0 * * * *'
-  workflow_dispatch: # Permite ejecutar manualmente
+  workflow_dispatch:
 
 permissions:
-  contents: write # Necesario para hacer commit del archivo
+  contents: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del repo
+      - name: Checkout
         uses: actions/checkout@v4
       
       - name: Setup Python
@@ -21,36 +20,83 @@ jobs:
         with:
           python-version: '3.12'
       
-      - name: Instalar requests
-        run: pip install requests
-      
       - name: Descargar datos de ArcGIS
-        run: python sync_arcgis.py
+        run: |
+          pip install requests -q
+          python3 << 'PYEOF'
+          import requests, json, os, sys
+          from datetime import datetime
+          
+          URL = "https://services.arcgis.com/vC1CdlKWEAtuT38d/arcgis/rest/services/ReportesCiudadanos_Terremoto_20260810/FeatureServer"
+          OUT = "data/reportes_terremoto.json"
+          
+          print("Conectando a ArcGIS FeatureServer...")
+          
+          try:
+              r = requests.get(f"{URL}?f=json", timeout=15)
+              r.raise_for_status()
+              info = r.json()
+          except Exception as e:
+              print(f"ERROR conectando: {e}")
+              sys.exit(1)
+          
+          layers = info.get("layers", [])
+          print(f"Servicio: {info.get('name','N/A')} | Capas: {len(layers)}")
+          if not layers:
+              print("No hay capas")
+              sys.exit(1)
+          
+          lid = layers[0].get("id", 0)
+          print(f"Descargando capa {lid}...")
+          
+          try:
+              r = requests.get(f"{URL}/{lid}/query", params={
+                  "where": "1=1", "outFields": "*", "f": "json",
+                  "returnGeometry": "true", "resultRecordCount": 2000
+              }, timeout=60)
+              r.raise_for_status()
+              result = r.json()
+          except Exception as e:
+              print(f"ERROR descargando: {e}")
+              sys.exit(1)
+          
+          features = result.get("features", [])
+          print(f"Descargados {len(features)} features")
+          
+          if len(features) == 0:
+              print("No hay features")
+              sys.exit(1)
+          
+          os.makedirs("data", exist_ok=True)
+          output = {
+              "metadata": {
+                  "source": URL,
+                  "downloaded_at": datetime.utcnow().isoformat() + "Z",
+                  "total_features": len(features)
+              },
+              "data": result
+          }
+          with open(OUT, "w", encoding="utf-8") as f:
+              json.dump(output, f, ensure_ascii=False, indent=2)
+          
+          size = os.path.getsize(OUT)
+          print(f"Archivo creado: {OUT} ({size} bytes)")
+          print("OK")
+          PYEOF
         env:
           ARCGIS_USERNAME: ${{ secrets.ARCGIS_USERNAME }}
           ARCGIS_PASSWORD: ${{ secrets.ARCGIS_PASSWORD }}
       
-      - name: Verificar archivo descargado
+      - name: Verificar y commitear
         run: |
-          echo "=== Verificando data/reportes_terremoto.json ==="
-          if [ -f "data/reportes_terremoto.json" ]; then
-            echo "✅ Archivo encontrado!"
-            echo "   Tamaño: $(wc -c < data/reportes_terremoto.json) bytes"
-            echo "   Primeros 200 caracteres:"
-            head -c 200 data/reportes_terremoto.json
-          else
-            echo "❌ El archivo NO existe"
-            echo "=== Buscando archivos JSON en el repo ==="
-            find . -name "*.json" -type f 2>/dev/null || echo "Ninguno encontrado"
-            echo "=== Contenido del directorio actual ==="
-            ls -la
+          if [ ! -f "data/reportes_terremoto.json" ]; then
+            echo "El archivo no existe"
+            ls -la data/ 2>/dev/null || echo "Directorio data/ no existe"
             exit 1
           fi
-      
-      - name: Commit y push de los datos
-        run: |
+          echo "Archivo OK: $(wc -c < data/reportes_terremoto.json) bytes"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/reportes_terremoto.json
-          git commit -m "Sync ArcGIS: $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No hay cambios"
+          git commit -m "Sync ArcGIS: $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "Sin cambios"
           git push
