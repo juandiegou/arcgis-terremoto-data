@@ -26,11 +26,31 @@ jobs:
       
       - name: Descargar datos de ArcGIS
         run: python sync_arcgis.py
+        env:
+          ARCGIS_USERNAME: ${{ secrets.ARCGIS_USERNAME }}
+          ARCGIS_PASSWORD: ${{ secrets.ARCGIS_PASSWORD }}
+      
+      - name: Verificar archivo descargado
+        run: |
+          echo "=== Verificando data/reportes_terremoto.json ==="
+          if [ -f "data/reportes_terremoto.json" ]; then
+            echo "✅ Archivo encontrado!"
+            echo "   Tamaño: $(wc -c < data/reportes_terremoto.json) bytes"
+            echo "   Primeros 200 caracteres:"
+            head -c 200 data/reportes_terremoto.json
+          else
+            echo "❌ El archivo NO existe"
+            echo "=== Buscando archivos JSON en el repo ==="
+            find . -name "*.json" -type f 2>/dev/null || echo "Ninguno encontrado"
+            echo "=== Contenido del directorio actual ==="
+            ls -la
+            exit 1
+          fi
       
       - name: Commit y push de los datos
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/reportes_terremoto.json
-          git commit -m "🔄 Sync ArcGIS: $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No hay cambios"
+          git commit -m "Sync ArcGIS: $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "No hay cambios"
           git push
