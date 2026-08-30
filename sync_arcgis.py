@@ -12,6 +12,7 @@ AUTENTICACION:
 import requests
 import json
 import os
+import sys
 from datetime import datetime
 
 # URL del FeatureServer de ArcGIS
@@ -61,12 +62,17 @@ def download_features():
     if token:
         params['token'] = token
     
-    r = requests.get(f"{FEATURESERVER_URL}?f=json", params=params, timeout=15)
-    r.raise_for_status()
-    service_info = r.json()
+    try:
+        r = requests.get(f"{FEATURESERVER_URL}?f=json", params=params, timeout=15)
+        r.raise_for_status()
+        service_info = r.json()
+    except Exception as e:
+        print(f"Error al conectar al FeatureServer: {e}")
+        return None
     
     if 'error' in service_info:
-        raise Exception(f"Error del servicio: {service_info['error'].get('message', 'N/A')}")
+        print(f"Error del servicio: {service_info['error'].get('message', 'N/A')}")
+        return None
     
     layers = service_info.get('layers', [])
     print(f"Servicio: {service_info.get('name', 'N/A')}")
@@ -92,15 +98,24 @@ def download_features():
         query_params['token'] = token
     
     print("Descargando features...")
-    r = requests.get(query_url, params=query_params, timeout=60)
-    r.raise_for_status()
-    result = r.json()
+    try:
+        r = requests.get(query_url, params=query_params, timeout=60)
+        r.raise_for_status()
+        result = r.json()
+    except Exception as e:
+        print(f"Error al descargar features: {e}")
+        return None
     
     if 'error' in result:
-        raise Exception(f"Error en query: {result['error'].get('message', 'N/A')}")
+        print(f"Error en query: {result['error'].get('message', 'N/A')}")
+        return None
     
     features = result.get('features', [])
     print(f"Descargados {len(features)} features")
+    
+    if len(features) == 0:
+        print("No se encontraron features en la capa")
+        return None
     
     return result
 
@@ -132,9 +147,16 @@ def main():
     data = download_features()
     if data is None:
         print("No se pudieron descargar los datos")
-        exit(1)
+        sys.exit(1)
     
     save_json(data, OUTPUT_FILE)
+    
+    # Verificar que el archivo se creo
+    if os.path.exists(OUTPUT_FILE):
+        print(f"Archivo creado: {OUTPUT_FILE} ({os.path.getsize(OUTPUT_FILE)} bytes)")
+    else:
+        print(f"ERROR: El archivo {OUTPUT_FILE} no se creo")
+        sys.exit(1)
     
     print("Sincronizacion completada!")
     print("Los datos estaran disponibles en raw.githubusercontent.com")
